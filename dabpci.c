@@ -7,6 +7,7 @@
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/cdev.h>
+#include <linux/ioctl.h>
 #include "dabpci.h"
 
 
@@ -18,6 +19,7 @@ static struct dab_dev *DABDrv;
 
 static int DABDrv_Open(struct inode *inode,struct file *filp)
 {
+	iowrite32(0x00000001,DABDrv->mmio_addr +34);
     return 0;
 }
 
@@ -28,6 +30,28 @@ static int DABDrv_Release(struct inode *inode, struct file *filp)
 
 static long  DABDrv_IOControl(struct file* filp, unsigned int cmd, unsigned long arg)
 {
+	int err = 0;
+	int i = 0;
+	unsigned int arg1 = arg;
+
+	//int n = 0;
+	unsigned int dwData;
+      //   printk(KERN_INFO "in \n");
+
+	if (_IOC_TYPE(cmd) != TSDAB_IOC_MAGIC)                 //
+		return -ENOTTY;
+	if (_IOC_NR(cmd) > TSDAB_IOC_MAXNR)
+		return -ENOTTY;
+
+   if (_IOC_DIR(cmd) & _IOC_READ)
+		err = !access_ok(VERIFY_WRITE, (void __user *)arg, _IOC_SIZE(cmd));
+	else if (_IOC_DIR(cmd) & _IOC_WRITE)
+
+	if (err)
+		return -EFAULT;					//
+
+		
+		
     return 0;
 }
 
