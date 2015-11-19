@@ -19,7 +19,7 @@ struct dab_dev {
     struct pci_dev *pci_dev;
     void *data;
 
-    void __iomem *mmio_addr; 
+    void __iomem *mmio_bar0; 
     unsigned long mmio_start;
     unsigned long mmio_end;
     unsigned long mmio_flags;
