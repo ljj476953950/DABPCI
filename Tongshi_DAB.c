@@ -8,6 +8,7 @@
 #include <linux/fs.h>
 #include <linux/cdev.h>
 #include <linux/ioctl.h>
+#include <linux/dma-mapping.h>
 #include "dabpci.h"
 
 
@@ -16,6 +17,12 @@ int dabpci_nr_devs = 1;
 int dabpci_major = 0;
 
 static struct dab_dev *DABDrv;
+
+static int DABDrv_w32(int addr, int data)
+{
+	iowrite32(data,DABDrv->mmio_bar0 + addr);
+	return 0;
+}
 
 static int DABDrv_Open(struct inode *inode,struct file *filp)
 {
@@ -34,11 +41,11 @@ static long  DABDrv_IOControl(struct file* filp, unsigned int cmd, unsigned long
 	int i = 0;
 	unsigned int arg1 = arg;
 
-	//int n = 0;
 	unsigned int dwData;
-         printk(KERN_INFO "in ioctl\n");
+         printk(KERN_INFO "in IOCTL\n");
+         printk(KERN_INFO "in IOCTL\n");
 
-	if (_IOC_TYPE(cmd) != TSDAB_IOC_MAGIC)                 //
+	if (_IOC_TYPE(cmd) != TSDAB_IOC_MAGIC)                 
 		return -ENOTTY;
 	if (_IOC_NR(cmd) > TSDAB_IOC_MAXNR)
 		return -ENOTTY;
@@ -48,12 +55,12 @@ static long  DABDrv_IOControl(struct file* filp, unsigned int cmd, unsigned long
 	else if (_IOC_DIR(cmd) & _IOC_WRITE)
 
 	if (err)
-		return -EFAULT;					//
+		return -EFAULT;					
 
 	switch(cmd)
 	{
 	case DmaSet:
-		iowrite32(0x0000000f,DABDrv->mmio_bar0+arg);	
+//		iowrite32(0x0000000f,DABDrv->mmio_bar0+arg);	
 	
 	}		
 
@@ -61,9 +68,29 @@ static long  DABDrv_IOControl(struct file* filp, unsigned int cmd, unsigned long
     return 0;
 }
 
+
+
+
 static ssize_t DABDrv_Write(struct file* filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
-    return 0;
+	int err = -EINVAL;
+	void * virt_addr = NULL;
+	dma_addr_t dma_write_addr;
+	
+	if(count>DMA_LENGTH)
+		return 0;
+	
+	if(unlikely(copy_from_user(DABDrv->dma_addr,buf,count)))
+		return err;
+		
+//	dma_write_addr = pci_map_single(DABDrv->pci_dev,virt_addr,count,PCI_DMA_TODEVICE);
+	
+	DABDrv_w32(RD_DMA_ADR,DABDrv->dma_handle);
+	DABDrv_w32(RD_DMA_SIZE,count>>12);
+	DABDrv_w32(RD_DMA_CTL,0x1);
+
+
+    return count;
 }
 
 static ssize_t DABDrv_Read(struct file* filp, char __user *buf, size_t count, loff_t *f_pos)
@@ -88,15 +115,15 @@ MODULE_DEVICE_TABLE(pci,dabpci_ids);
 
 irqreturn_t DABDrv_interrupt(int irq,void *dev)
 {
-
+	printk(KERN_INFO "interrupt DAB PCIe.");
     return IRQ_HANDLED;
 }
 
 static int dabpci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
     int result;
-    printk(KERN_INFO "init DAB PCIe.");
-    printk(KERN_INFO "the vendor:0x%x.\nthe device:0x%x.\n",dev->vendor,dev->device);
+    printk(KERN_INFO "initialize DAB PCIe.");
+    printk(KERN_INFO "the vendor:0x%x.\n the device:0x%x.\n",dev->vendor,dev->device);
 
     /*adapt the space for private*/
     DABDrv = kmalloc(sizeof(struct dab_dev),GFP_KERNEL);
@@ -111,7 +138,7 @@ static int dabpci_probe(struct pci_dev *dev, const struct pci_device_id *id)
     
     if(unlikely(result))
         goto disable_pci;
-    /*set the pci dma mode*/
+    /*set the PCI DMA mode*/
     pci_set_master(dev);
     result = pci_set_dma_mask(dev, DMA_BIT_MASK(32));
     if(unlikely(result))
@@ -120,7 +147,7 @@ static int dabpci_probe(struct pci_dev *dev, const struct pci_device_id *id)
         goto disable_pci;
     }
     else
-        printk( KERN_INFO "DABPCI: set dma mask successfuly!\n");
+        printk( KERN_INFO "DABPCI: set DMA mask successfully!\n");
 
     /*request I/O resource */
 
@@ -131,7 +158,7 @@ static int dabpci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
     if(unlikely(!(DABDrv->mmio_flags & IORESOURCE_MEM)))
     {
-        printk(KERN_ERR "DABPCI: Failed to alloc IO mem!\n");
+        printk(KERN_ERR "DABPCI: Failed to allocate IO memory!\n");
     }
 
 
@@ -153,7 +180,7 @@ static int dabpci_probe(struct pci_dev *dev, const struct pci_device_id *id)
     result = pci_enable_msi(dev);
     if(unlikely(result))
     {
-        printk(KERN_ERR "DABPCI: Failed to enable msi!\n");
+        printk(KERN_ERR "DABPCI: Failed to enable MSI!\n");
         return result;
     }
 
@@ -161,7 +188,7 @@ static int dabpci_probe(struct pci_dev *dev, const struct pci_device_id *id)
     result = request_irq(DABDrv->m_irq,DABDrv_interrupt,IRQF_DISABLED,DAB_NAME,NULL);
     if(unlikely(result))
     {
-        printk(KERN_ERR "DABPCI: Failed to request interrup.\n");
+        printk(KERN_ERR "DABPCI: Failed to request interrupt.\n");
         goto disable_pci;
     }
 
@@ -173,12 +200,13 @@ static int dabpci_probe(struct pci_dev *dev, const struct pci_device_id *id)
     }
     else
     {
-        printk(KERN_INFO "DABPCI: Get the major device number succesful,major = %d\n",dabpci_major);
+        printk(KERN_INFO "DABPCI: Get the major device number successfully,major = %d\n",dabpci_major);
     }
     
+	DABDrv->dma_addr =
+	    dma_alloc_coherent(NULL, DMA_LENGTH, &(DABDrv->dma_handle), GFP_KERNEL);
 
-
-
+	printk(KERN_INFO "The virtual address is %x, the physical address is %x\n",dabpci_major);
 
     return 0;
 
@@ -219,9 +247,9 @@ module_init( dabpci_init );
 module_exit( dabpci_exit );
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Li Jiajie, Xi'an Tongshi");
+MODULE_AUTHOR("Li JiaJie, Xi'an TongShi");
 MODULE_VERSION("V1.0");
-MODULE_DESCRIPTION("Tongshi 4-Channel DAB Broadcast card");
+MODULE_DESCRIPTION("TongShi 4-Channel DAB Broadcast card");
 
 
 
