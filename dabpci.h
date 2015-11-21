@@ -2,7 +2,7 @@
 #define _DABPCI_H_
 
 #define PCI_VENDOR_ID_DAB 0x1172
-#define PCI_DEVICE_ID_DAB 0x4258
+#define PCI_DEVICE_ID_DAB 0x0004
 
 #define DAB_NAME "Tongshi_DAB"
 #define DAB_CLASS_NAME "Tongshi_DAB_BOARD"
@@ -27,7 +27,7 @@ struct dab_dev {
 	
 	int dma_read_done;
 	
-	dma_addr_t *dma_handle;			//	physical address of DMA
+	dma_addr_t dma_handle;			//	physical address of DMA
 	char *dma_addr;					//	virtual address of DMA
 
     void __iomem *mmio_bar0; 

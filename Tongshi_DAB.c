@@ -27,6 +27,7 @@ static int DABDrv_w32(int addr, int data)
 static int DABDrv_Open(struct inode *inode,struct file *filp)
 {
 //	iowrite32(0x00000001,DABDrv->mmio_bar0 +29);
+	
     return 0;
 }
 
@@ -60,7 +61,7 @@ static long  DABDrv_IOControl(struct file* filp, unsigned int cmd, unsigned long
 	switch(cmd)
 	{
 	case DmaSet:
-//		iowrite32(0x0000000f,DABDrv->mmio_bar0+arg);	
+		iowrite32(0x0000000f,DABDrv->mmio_bar0+arg);	
 	
 	}		
 
@@ -85,9 +86,13 @@ static ssize_t DABDrv_Write(struct file* filp, const char __user *buf, size_t co
 		
 //	dma_write_addr = pci_map_single(DABDrv->pci_dev,virt_addr,count,PCI_DMA_TODEVICE);
 	
-	DABDrv_w32(RD_DMA_ADR,DABDrv->dma_handle);
+	DABDrv_w32(RD_DMA_ADR,(int)DABDrv->dma_handle);
+	DABDrv_w32(RD_DMA_CTL,0x2);
+	DABDrv_w32(RD_DMA_CTL,0x3);
 	DABDrv_w32(RD_DMA_SIZE,count>>12);
-	DABDrv_w32(RD_DMA_CTL,0x1);
+//	DABDrv_w32(RD_DMA_CTL,0x2);
+//	DABDrv_w32(RD_DMA_CTL,0x3);
+
 
 
     return count;
@@ -113,9 +118,9 @@ static struct pci_device_id dabpci_ids[] = {
 };
 MODULE_DEVICE_TABLE(pci,dabpci_ids);
 
-irqreturn_t DABDrv_interrupt(int irq,void *dev)
+static irqreturn_t DABDrv_interrupt(int irq,void *dev)
 {
-	printk(KERN_INFO "interrupt DAB PCIe.");
+	printk(KERN_INFO "irq:%d:interrupt DAB PCIe.\n",irq);
     return IRQ_HANDLED;
 }
 
@@ -185,12 +190,17 @@ static int dabpci_probe(struct pci_dev *dev, const struct pci_device_id *id)
     }
 
     DABDrv->m_irq = dev->irq;
-    result = request_irq(DABDrv->m_irq,DABDrv_interrupt,IRQF_DISABLED,DAB_NAME,NULL);
+    result = request_irq(DABDrv->m_irq,DABDrv_interrupt,IRQF_DISABLED,DAB_NAME,DABDrv);
+    if(likely(!result))
+    {
+	printk(KERN_INFO "The DAB irq is %x.\n",DABDrv->m_irq);
+    }
     if(unlikely(result))
     {
         printk(KERN_ERR "DABPCI: Failed to request interrupt.\n");
         goto disable_pci;
     }
+
 
     dabpci_major = register_chrdev(0,DAB_NAME,&DABDrv_fops);
     if(dabpci_major<0)
@@ -206,7 +216,7 @@ static int dabpci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	DABDrv->dma_addr =
 	    dma_alloc_coherent(NULL, DMA_LENGTH, &(DABDrv->dma_handle), GFP_KERNEL);
 
-	printk(KERN_INFO "The virtual address is %x, the physical address is %x\n",dabpci_major);
+	printk(KERN_INFO "The virtual address is %x, the physical address is %x\n",DABDrv->dma_addr,DABDrv->dma_handle);
 
     return 0;
 
