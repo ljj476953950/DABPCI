@@ -9,6 +9,7 @@
 #include <linux/cdev.h>
 #include <linux/ioctl.h>
 #include <linux/dma-mapping.h>
+#include <linux/wait.h>
 #include "dabpci.h"
 
 
@@ -26,7 +27,16 @@ static int DABDrv_w32(int addr, int data)
 
 static int DABDrv_Open(struct inode *inode,struct file *filp)
 {
-//	iowrite32(0x00000001,DABDrv->mmio_bar0 +29);
+	
+	init_waitqueue_head(&DABDrv->wq);
+
+	DABDrv->write_ptr = 0;
+	DABDrv->read_ptr = 0;
+	
+	DABDrv_w32(RD_DMA_ADR,(int)DABDrv->dma_handle);
+	DABDrv_w32(RD_DMA_CTL,0x2);
+	DABDrv_w32(RD_DMA_CTL,0x3);
+	
 	
     return 0;
 }
@@ -61,7 +71,7 @@ static long  DABDrv_IOControl(struct file* filp, unsigned int cmd, unsigned long
 	switch(cmd)
 	{
 	case DmaSet:
-		iowrite32(0x0000000f,DABDrv->mmio_bar0+arg);	
+//		iowrite32(0x0000000f,DABDrv->mmio_bar0+arg);	
 	
 	}		
 
@@ -72,30 +82,107 @@ static long  DABDrv_IOControl(struct file* filp, unsigned int cmd, unsigned long
 
 
 
-static ssize_t DABDrv_Write(struct file* filp, const char __user *buf, size_t count, loff_t *f_pos)
+static ssize_t DABDrv_Write(struct file* filp, const char __user *buf, size_t blk_cnt, loff_t *f_pos)
 {
 	int err = -EINVAL;
 	void * virt_addr = NULL;
 	dma_addr_t dma_write_addr;
 	
-	if(count>DMA_LENGTH)
+	if(blk_cnt>=DMA_BLOCK)
 		return 0;
 	
-	if(unlikely(copy_from_user(DABDrv->dma_addr,buf,count)))
-		return err;
-		
-//	dma_write_addr = pci_map_single(DABDrv->pci_dev,virt_addr,count,PCI_DMA_TODEVICE);
+	if((DABDrv->write_ptr < DABDrv->read_ptr) && (DABDrv->write_ptr >= DABDrv->read_ptr - blk_cnt))
+	{
+//		if(DABDrv->write_ptr + blk_cnt >= DABDrv->read_ptr)
+//		{
+			DABDrv -> flag = 0;
+			while(DABDrv -> flag==0){
+				wait_event_interruptible(DABDrv->wq, DABDrv -> flag != 0);
+			}
+						
+//		}
+	}
 	
-	DABDrv_w32(RD_DMA_ADR,(int)DABDrv->dma_handle);
-	DABDrv_w32(RD_DMA_CTL,0x2);
-	DABDrv_w32(RD_DMA_CTL,0x3);
-	DABDrv_w32(RD_DMA_SIZE,count>>12);
-//	DABDrv_w32(RD_DMA_CTL,0x2);
-//	DABDrv_w32(RD_DMA_CTL,0x3);
+//	if(DABDrv->write_ptr >= DABDrv->read_ptr)
+//	{
+		if(DABDrv->write_ptr + blk_cnt >= DMA_BLOCK + DABDrv->read_ptr)
+		{
+			DABDrv -> flag = 0;
+			while(DABDrv -> flag==0){
+				wait_event_interruptible(DABDrv->wq, DABDrv -> flag != 0);
+			}
+		}
+//	}
 
+	if(DABDrv->write_ptr >= DABDrv->read_ptr)
+	{
+		if(DABDrv->write_ptr + blk_cnt < DMA_BLOCK)
+		{
+			if(unlikely(copy_from_user(DABDrv->dma_addr + DABDrv->write_ptr * DMA_BLOCK_SIZE,buf,blk_cnt*DMA_BLOCK_SIZE)))
+				return err;
+			DABDrv->write_ptr += blk_cnt;
+		} 
+		else if(DABDrv->write_ptr + blk_cnt = DMA_BLOCK)
+		{
+			if(unlikely(copy_from_user(DABDrv->dma_addr + DABDrv->write_ptr * DMA_BLOCK_SIZE,buf,blk_cnt*DMA_BLOCK_SIZE)))
+				return err;
+			DABDrv->write_ptr = 0;
+		}
+		else //((DABDrv->write_ptr + blk_cnt > DMA_BLOCK) && (DABDrv->write_ptr + blk_cnt < DMA_BLOCK + DABDrv->read_ptr))
+		{
+			if(unlikely(copy_from_user(DABDrv->dma_addr + DABDrv->write_ptr * DMA_BLOCK_SIZE,buf,(DMA_BLOCK-DABDrv->write_ptr)*DMA_BLOCK_SIZE)))
+				return err;
+			if(unlikely(copy_from_user(DABDrv->dma_addr + 0,buf+(DMA_BLOCK-DABDrv->write_ptr)*DMA_BLOCK_SIZE,\
+						(DABDrv->write_ptr + blk_cnt - DMA_BLOCK)*DMA_BLOCK_SIZE)))
+				return err;
+			DABDrv->write_ptr = DABDrv->write_ptr + blk_cnt - DMA_BLOCK;
+		}
 
-
-    return count;
+	}
+	else	// DABDrv->write_ptr < DABDrv->read_ptr
+	{
+		
+		if(DABDrv->write_ptr + blk_cnt < DABDrv->read_ptr)
+		{
+			if(unlikely(copy_from_user(DABDrv->dma_addr + DABDrv->write_ptr * DMA_BLOCK_SIZE,buf,blk_cnt*DMA_BLOCK_SIZE)))
+				return err;
+			DABDrv->write_ptr += blk_cnt;
+		}	
+	}
+	
+	DABDrv_w32(RD_DMA_WR_P,DABDrv->write_ptr);
+	
+/*	if(DABDrv->write_ptr + blk_cnt <= DABDrv->read_ptr + DMA_BLOCK)
+	{
+		if(DABDrv->write_ptr + blk_cnt < DMA_BLOCK)
+		{
+			if(unlikely(copy_from_user(DABDrv->dma_addr + DABDrv->write_ptr * DMA_BLOCK_SIZE,buf,blk_cnt*DMA_BLOCK_SIZE)))
+				return err;	
+			DABDrv->write_ptr += blk_cnt;
+			DABDrv_w32(RD_DMA_WR_P,DABDrv->write_ptr);
+		}
+		else
+		{
+			if(unlikely(copy_from_user(DABDrv->dma_addr + DABDrv->write_ptr * DMA_BLOCK_SIZE,buf,(DMA_BLOCK - DABDrv->write_ptr)*DMA_BLOCK_SIZE)))
+				return err;
+			if(unlikely(copy_from_user(DABDrv->dma_addr ,buf + (DMA_BLOCK - DABDrv->write_ptr)*DMA_BLOCK_SIZE,(blk_cnt - DMA_BLOCK + DABDrv->write_ptr)*DMA_BLOCK_SIZE)))
+				return err;
+			DABDrv->write_ptr = blk_cnt - DMA_BLOCK + DABDrv->write_ptr;
+		}
+	}
+	else 
+	{
+		DABDrv -> flag = 0;
+		while(flag==0){
+			wait_event_interruptible(wq, flag != 0);
+		}
+		if(unlikely(copy_from_user(DABDrv->dma_addr,buf,count)))
+			return err;	
+		DABDrv_w32(RD_DMA_WR_P,count>>12);
+	}
+	
+	*/
+    return blk_cnt;
 }
 
 static ssize_t DABDrv_Read(struct file* filp, char __user *buf, size_t count, loff_t *f_pos)
@@ -121,6 +208,22 @@ MODULE_DEVICE_TABLE(pci,dabpci_ids);
 static irqreturn_t DABDrv_interrupt(int irq,void *dev)
 {
 	printk(KERN_INFO "irq:%d:interrupt DAB PCIe.\n",irq);
+	
+	DABDrv -> read_ptr += DABDrv_r32(RD_DMA_WR_P);
+	if(DABDrv -> flag == 0)
+	{
+		int adjust_1 = (DABDrv->write_ptr < DABDrv->read_ptr) && (DABDrv->write_ptr >= DABDrv->read_ptr - blk_cnt);
+		int adjust_2 = (DABDrv->write_ptr + blk_cnt >= DMA_BLOCK + DABDrv->read_ptr);
+		if((adjust_1 == 0) && (adjust_2 == 0
+		{
+			DABDrv -> flag = 1;
+			wake_up_interruptible(&DABDrv->wq);
+		}
+	
+	
+	}
+	
+	
     return IRQ_HANDLED;
 }
 

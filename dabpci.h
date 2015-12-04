@@ -7,7 +7,9 @@
 #define DAB_NAME "Tongshi_DAB"
 #define DAB_CLASS_NAME "Tongshi_DAB_BOARD"
 
-#define DMA_LENGTH 4096*1024
+#define DMA_BLOCK	256
+#define DMA_BLOCK_SIZE	(4*1024)
+#define DMA_LENGTH 	(DMA_BLOCK*DMA_BLOCK_SIZE)			// the circular buffer
 
 #define TSDAB_IOC_MAGIC  'k'          // magic is 'k'
 #define DmaSet  		  _IO(TSDAB_IOC_MAGIC,1)
@@ -18,7 +20,7 @@
 
 #define RD_DMA_CTL	0x00<<2
 #define RD_DMA_ADR 0x01<<2
-#define RD_DMA_SIZE	0x07<<2
+#define RD_DMA_WR_P	0x07<<2
 
 struct dab_dev {
 
@@ -35,8 +37,15 @@ struct dab_dev {
     unsigned long mmio_end;
     unsigned long mmio_flags;
     unsigned long mmio_len;
+	
+	// the circular buffer by BLOCK
+	int write_ptr;					//	pointer to write memory
+	int read_ptr;					//	pointer to read memory
+	 							//	
     
     int m_irq;
+	wait_queue_head_t wq;
+	int flag;						// 1:empty;	0:full
 
 };
 
